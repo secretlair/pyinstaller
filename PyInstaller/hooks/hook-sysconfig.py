@@ -37,8 +37,7 @@ def _find_prefix(filename):
 
 def _relpath(filename):
     # Relative path in the dist directory.
-    prefix = _find_prefix(filename)
-    return compat.relpath(os.path.dirname(filename), prefix)
+    return compat.relpath(os.path.dirname(filename), sys.prefix)
 
 # The 'sysconfig' module requires Makefile and pyconfig.h files from
 # Python installation. 'sysconfig' parses these files to get some
