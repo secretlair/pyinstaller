@@ -1528,6 +1528,11 @@ class BUNDLE(Target):
 
         toc = addSuffixToExtensions(self.toc)
         for inm, fnm, typ in toc:
+            # Ignore copying in files within egg archive files since they don't exist in the file system.
+            if (not os.path.exists(fnm)
+                and os.path.basename(os.path.dirname(fnm)).endswith(".egg")
+                and os.path.isfile(os.path.dirname(fnm))):
+                continue            
             # Copy files from cache. This ensures that are used files with relative
             # paths to dynamic library dependencies (@executable_path)
             if typ in ('EXTENSION', 'BINARY'):
