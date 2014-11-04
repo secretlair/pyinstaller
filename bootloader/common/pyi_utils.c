@@ -537,6 +537,8 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
 
 #else
 
+#include <pthread.h>
+extern int launch_apple_events_thread( void );
 
 static int set_dynamic_library_path(const char* path)
 {
@@ -617,6 +619,7 @@ static void _signal_handler(int signal)
  */
 int pyi_utils_create_child(const char *thisfile, const int argc, char *const argv[])
 {
+    VS("LOADER: pyi_utils_create_child() enter\n");
     pid_t pid = 0;
     int rc = 0;
     int i;
@@ -640,7 +643,10 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
     }
 
 #if defined(__APPLE__) && defined(WINDOWED)
-    process_apple_events();
+    launch_apple_events_thread();
+    // process_apple_events();
+#else
+   VS("LOADER: Bypassing AppleEvent main loop.\n");
 #endif
 
 
@@ -648,11 +654,17 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
 
     /* Child code. */
     if (pid == 0)
+    {
+        VS("LOADER: execvp(thisfile, argv_pyi)\n",rc);
+
         /* Replace process by starting a new application. */
         execvp(thisfile, argv_pyi);
+    }
     /* Parent code. */
     else
     {
+        VS("LOADER: child_pid = %i\n",pid);
+
         child_pid = pid;
 
         /* Redirect termination signals received by parent to child process. */
@@ -661,6 +673,7 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
         signal(SIGTERM, &_signal_handler);
     }
 
+    VS("LOADER: wait()\n");
     wait(&rc);
 
     /* Parent code. */
@@ -674,20 +687,22 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
         for (i = 0; i < argc_pyi; i++) free(argv_pyi[i]);
         free(argv_pyi);
     }
+
+    VS("LOADER: pyi_utils_create_child() exit [rc:%i]\n",rc);
+
     if (WIFEXITED(rc))
         return WEXITSTATUS(rc);
     /* Process ended abnormally */
     if (WIFSIGNALED(rc))
         /* Mimick the signal the child received */
         raise(WTERMSIG(rc));
+
     return 1;
 }
 
 
-
-
-
 #if defined(__APPLE__) && defined(WINDOWED)
+/* DEPRACTED OUT 6/17/2014
 static pascal OSErr handle_open_doc_ae(const AppleEvent *theAppleEvent, AppleEvent *reply, SRefCon handlerRefcon)
 {
   AEDescList docList;
@@ -735,6 +750,7 @@ static pascal OSErr handle_open_doc_ae(const AppleEvent *theAppleEvent, AppleEve
 
   return (err);
 }
+*/
 
 static int gQuit = false;
 
@@ -753,13 +769,18 @@ static void apple_main_event_loop()
          VS("LOADER: Processing an AppleEvent.\n");
          AEProcessAppleEvent(&event);
       }
-      gQuit = true;
+      // gQuit = true;
    }
+
+   VS("LOADER: Exiting AppleEvent main loop [gQuit:%i].\n", gQuit);
 }
 
+/* DEPRACTED OUT 6/17/2014
 static void process_apple_events()
 {
    OSErr err;
+
+   VS("LOADER: process_apple_events() enter\n");
 
    err = AEInstallEventHandler( kCoreEventClass , kAEOpenDocuments , handle_open_doc_ae , 0 , false );
    if (err != noErr)
@@ -777,7 +798,51 @@ static void process_apple_events()
        }
     }
 
+   VS("LOADER: process_apple_events() exit\n");
 }
+*/
+
+void* apple_events_thread(void* data)
+    {
+        // thread_data *p_passed_thread_data = (thread_data*)data;
+        // std::string directory_monitor = p_passed_thread_data->directory;
+
+        apple_main_event_loop();
+
+        return NULL;
+    };
+
+int launch_apple_events_thread( void )
+    {
+    // Create the thread using POSIX routines.
+    pthread_attr_t  attr;
+    pthread_t       posixThreadID;
+    int             returnVal;
+
+    returnVal = pthread_attr_init(&attr);
+    assert(!returnVal);
+    returnVal = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    assert(!returnVal);
+
+//    thread_data *p_thread_data = new thread_data;
+//    p_thread_data->directory = directory_monitoring;
+//    p_thread_data->p_monitor_stream = p_fsevent_stream;
+//    p_thread_data->p_creaddir = this;
+
+    void *p_thread_data_void = NULL; // p_thread_data;
+
+    int threadError = pthread_create(&posixThreadID, &attr, &apple_events_thread, p_thread_data_void);
+
+    returnVal = pthread_attr_destroy(&attr);
+    assert(!returnVal);
+    if (threadError != 0)
+        {
+        // Report an error.
+        }
+
+    return 0;
+    };
+
 
 #endif
 

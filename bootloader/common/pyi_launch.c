@@ -411,7 +411,7 @@ void pyi_launch_initialize(const char *executable, const char *extractionpath)
      * Call TransformProcessType() in the child process.
      */
     ProcessSerialNumber psn = { 0, kCurrentProcess };
-    OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToForegroundApplication);
+    OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToUIElementApplication);
     #elif WIN32
     CreateActContext(extractionpath, executable);
     #endif
