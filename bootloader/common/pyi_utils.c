@@ -619,13 +619,14 @@ static void _signal_handler(int signal)
  */
 int pyi_utils_create_child(const char *thisfile, const int argc, char *const argv[])
 {
-    VS("LOADER: pyi_utils_create_child() enter\n");
-    pid_t pid = 0;
-    int rc = 0;
+    pid_t pid;
+    int rc;
     int i;
-
+    VS("LOADER: pyi_utils_create_child() enter\n");
     argv_pyi = (char**)calloc(argc+1,sizeof(char*));
     argc_pyi = 0;
+    pid = 0;
+    rc = 0;
 
     for (i = 0; i < argc; i++)
     {
