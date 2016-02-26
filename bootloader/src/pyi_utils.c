@@ -51,9 +51,6 @@
 #include <string.h>
 #include <sys/stat.h>  // struct stat
 #include <wchar.h>  // wchar_t
-#if defined(__APPLE__) && defined(WINDOWED)
-    #include <Carbon/Carbon.h>  // AppleEventsT
-#endif
 
 /*
  * Function 'mkdtemp' (make temporary directory) is missing on some *nix platforms: 
@@ -82,18 +79,6 @@
 */
 static char **argv_pyi = NULL;
 static int argc_pyi = 0;
-
-/*
- * Watch for OpenDocument AppleEvents and add the files passed in to the
- * sys.argv command line on the Python side.
- *
- * This allows on Mac OS X to open files when a file is dragged and dropped
- * on the App icon in the OS X dock.
- */
-#if defined(__APPLE__) && defined(WINDOWED)
-static void process_apple_events_new();
-#endif
-
 
 /* Return string copy of environment variable. */
 char *pyi_getenv(const char *variable)
@@ -551,9 +536,7 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
 			&si,  // pointer to STARTUPINFO 
 			&pi  // pointer to PROCESS_INFORMATION 
 			)) {
-		VS("LOADER: Waiting for child process to finish...\n");
-		WaitForSingleObject(pi.hProcess, INFINITE);
-		GetExitCodeProcess(pi.hProcess, (unsigned long *)&rc);
+		rc = 0;
 	} else {
 		FATALERROR("Error creating child process!\n");
 		rc = -1;
@@ -563,7 +546,6 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
 
 
 #else
-
 
 static int set_dynamic_library_path(const char* path)
 {
@@ -652,12 +634,11 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
     argc_pyi = 0;
     pid = 0;
     rc = 0;
-
     for (i = 0; i < argc; i++)
     {
 #if defined(__APPLE__) && defined(WINDOWED)
       // if we are on a Mac, it passes a strange -psnxxx argument.  Filter it out.
-      if (strstr(argv[i],"-psn") == argv[i])  
+      if (strstr(argv[i],"-psn") == argv[i])
         {
            // skip
         }
@@ -668,304 +649,29 @@ int pyi_utils_create_child(const char *thisfile, const int argc, char *const arg
         }
     }
 
-#if defined(__APPLE__) && defined(WINDOWED)
-    process_apple_events_new();
-#endif
-
-
     pid = fork();
 
     /* Child code. */
     if (pid == 0)
+    {
         /* Replace process by starting a new application. */
         execvp(thisfile, argv_pyi);
+    }
     /* Parent code. */
     else
     {
         child_pid = pid;
-
-        /* Redirect termination signals received by parent to child process. */
-        signal(SIGINT, &_signal_handler);
-        signal(SIGKILL, &_signal_handler);
-        signal(SIGTERM, &_signal_handler);
     }
-
-    wait(&rc);
 
     /* Parent code. */
     if(child_pid != 0 )
     {
-        /* When child process exited, reset signal handlers to default values. */
-        signal(SIGINT, SIG_DFL);
-        signal(SIGKILL, SIG_DFL);
-        signal(SIGTERM, SIG_DFL);
 
         for (i = 0; i < argc_pyi; i++) free(argv_pyi[i]);
         free(argv_pyi);
     }
-    if (WIFEXITED(rc))
-        return WEXITSTATUS(rc);
-    /* Process ended abnormally */
-    if (WIFSIGNALED(rc))
-        /* Mimick the signal the child received */
-        raise(WTERMSIG(rc));
-    return 1;
+
+    return 0;
 }
-
-
-
-
-/*
- * On Mac OS X this converts files from kAEOpenDocuments events into sys.argv.
- */
-#if defined(__APPLE__) && defined(WINDOWED)
-
-// TODO: Why is this commented out?
-/*
-static pascal OSErr handle_open_doc_ae(const AppleEvent *theAppleEvent, AppleEvent *reply, SRefCon handlerRefcon)
-{
-  AEDescList docList;
-  long index;
-  long count = 0;
-  int i;
-  char *myFileName;
-  Size actualSize;
-  DescType returnedType;
-  AEKeyword keywd;
-  FSRef theRef;
-
-  VS("LOADER: handle_open_doc_ae called.\n");
-
-  OSErr err = AEGetParamDesc(theAppleEvent, keyDirectObject, typeAEList, &docList);
-  if (err != noErr) return err;
-
-  err = AECountItems(&docList, &count);
-  if (err != noErr) return err;
-  for (index = 1; index <= count; index++)
-  {
-     err = AEGetNthPtr(&docList, index, typeFSRef, &keywd, &returnedType, &theRef, sizeof(theRef), &actualSize);
-
-     CFURLRef fullURLRef;
-     fullURLRef = CFURLCreateFromFSRef(NULL, &theRef);
-     CFStringRef cfString = CFURLCopyFileSystemPath(fullURLRef, kCFURLPOSIXPathStyle);
-     CFRelease(fullURLRef);
-     CFMutableStringRef cfMutableString = CFStringCreateMutableCopy(NULL, 0, cfString);
-     CFRelease(cfString);
-     CFStringNormalize(cfMutableString, kCFStringNormalizationFormC);
-     int len = CFStringGetLength(cfMutableString);
-     const int bufferSize = (len+1)*6;  // in theory up to six bytes per Unicode code point, for UTF-8.
-     char* buffer = (char*)malloc(bufferSize);
-     CFStringGetCString(cfMutableString, buffer, bufferSize, kCFStringEncodingUTF8);
-
-     argv_pyi = (char**)realloc(argv_pyi,(argc_pyi+2)*sizeof(char*));
-     argv_pyi[argc_pyi++] = strdup(buffer);
-     argv_pyi[argc_pyi] = NULL;
-
-     free(buffer);
-  }
-
-  err = AEDisposeDesc(&docList);
-
-
-  return (err);
-}
-
-static int gQuit = false;
-
-static void apple_main_event_loop()
-{
-   OSErr err;
-   EventRef eventRef;
-   EventRecord event;
-   //UInt32 timeout = 1*60; // number of ticks (1/60th of a second)
-   VS("LOADER: Entering AppleEvent main loop.\n");
-
-   while (!gQuit)
-   {
-      // Previous func WaitNextEvent() was deprecated and 32-bit only.
-      // Func ReceiveNextEvent() is threadsafe and available even for 64-bit OS X.
-      //gotEvent = WaitNextEvent(highLevelEventMask, &event, timeout, NULL);
-      err = ReceiveNextEvent(0, NULL, kEventDurationNoWait, true, &eventRef);
-      if (err == noErr)
-      {
-         VS("LOADER: Processing an AppleEvent.\n");
-         // Convert the event ref to the type AEProcessAppleEvent expects.
-         ConvertEventRefToEventRecord(eventRef, &event);
-         AEProcessAppleEvent(&event);
-         // Func ReceiveNextEvent() requires releasing event manually.
-         ReleaseEvent(eventRef);
-      }
-      gQuit = true;
-   }
-}
-
-
-static void process_apple_events()
-{
-   OSErr err;
-
-   err = AEInstallEventHandler( kCoreEventClass , kAEOpenDocuments , handle_open_doc_ae , 0 , false );
-   if (err != noErr)
-    {
-       VS("LOADER: Error installing AppleEvent handler.\n");
-    }
-    else
-    {
-       apple_main_event_loop();
-
-       err = AERemoveEventHandler(kCoreEventClass, kAEOpenDocuments, handle_open_doc_ae, false);
-       if (err != noErr)
-       {
-          VS("LOADER: Error uninstalling AppleEvent handler.\n");
-       }
-    }
-
-}
-*/
-/*
- * On Mac OS X converts files from kAEOpenDocuments events into sys.argv.
- * New implementation of handling Apple events - works even on 64bit Mac OS X.
- */
-static pascal OSStatus do_filenames_conversion_to_argv(EventHandlerCallRef next_handler,
-                                                       EventRef the_event,
-                                                       void* user_data)
-{
-
-
-///////////////// OLD implementation
-/*
-  AEDescList docList;
-  long index;
-  long count = 0;
-  int i;
-  char *myFileName;
-  Size actualSize;
-  DescType returnedType;
-  AEKeyword keywd;
-  FSRef theRef;
-
-  VS("LOADER: handle_open_doc_ae called.\n");
-
-  OSErr err = AEGetParamDesc(theAppleEvent, keyDirectObject, typeAEList, &docList);
-  if (err != noErr) return err;
-
-  err = AECountItems(&docList, &count);
-  if (err != noErr) return err;
-  for (index = 1; index <= count; index++)
-  {
-     err = AEGetNthPtr(&docList, index, typeFSRef, &keywd, &returnedType, &theRef, sizeof(theRef), &actualSize);
-
-     CFURLRef fullURLRef;
-     fullURLRef = CFURLCreateFromFSRef(NULL, &theRef);
-     CFStringRef cfString = CFURLCopyFileSystemPath(fullURLRef, kCFURLPOSIXPathStyle);
-     CFRelease(fullURLRef);
-     CFMutableStringRef cfMutableString = CFStringCreateMutableCopy(NULL, 0, cfString);
-     CFRelease(cfString);
-     CFStringNormalize(cfMutableString, kCFStringNormalizationFormC);
-     int len = CFStringGetLength(cfMutableString);
-     const int bufferSize = (len+1)*6;  // in theory up to six bytes per Unicode code point, for UTF-8.
-     char* buffer = (char*)malloc(bufferSize);
-     CFStringGetCString(cfMutableString, buffer, bufferSize, kCFStringEncodingUTF8);
-
-     argv_pyi = (char**)realloc(argv_pyi,(argc_pyi+2)*sizeof(char*));
-     argv_pyi[argc_pyi++] = strdup(buffer);
-     argv_pyi[argc_pyi] = NULL;
-
-     free(buffer);
-  }
-
-  err = AEDisposeDesc(&docList);
-*/
-//////////////////////////////////////////////
-
-
-
-    // Handle the kAEOpenDocuments event.
-    VS("LOADER: AppleEvent - do_filenames_coversion_to_argv called.\n");
-    // Obtain filenames from event.
-    // Every event type contains different additional information.
-    // TODO
-    //GetEventParameter(the_event, )
-    // TODO
-    // Report success.
-    return noErr;
-}
-
-
-// TODO Unfinished, issue #1309.
-static void process_apple_events_new()
-{
-    OSStatus handler_install_status;
-    OSStatus handler_remove_status;
-    OSStatus event_received;
-    EventTypeSpec event_types[1];  //  List of event types to handle.
-    EventHandlerUPP handler_open_doc;
-    EventHandlerRef handler_ref;  // Reference for later removing the event handler.
-    EventRef event_ref;  // Event that caused ReceiveNextEvent to return.
-    OSType ev_class;
-    UInt32 ev_kind;
-    EventTimeout timeout = 3.0; // number of ticks (1/60th of a second)
-
-    VS("LOADER: AppleEvent - processing...\n");
-    // Event types we are interested in.
-    event_types[0].eventClass = kCoreEventClass;
-    event_types[0].eventKind = kAEOpenDocuments;
-    // Carbon Event Manager requires convert the function pointer to type EventHandlerUPP.
-    // https://developer.apple.com/legacy/library/documentation/Carbon/Conceptual/Carbon_Event_Manager/Tasks/CarbonEventsTasks.html
-    handler_open_doc = NewEventHandlerUPP(do_filenames_conversion_to_argv);
-    // Install the event handler.
-    // InstallApplicationEventHandler is a macro for 'InstallEventHandler' where the event target
-    // is Application.
-    // We do not have any windows so having Application as event target should be fine.
-    handler_install_status = InstallApplicationEventHandler(handler_open_doc, 1, event_types, NULL, &handler_ref);
-    if (handler_install_status == noErr)
-    {
-        VS("LOADER: AppleEvent - installed handler.\n");
-
-        // TODO
-        //ReceiveNextEvent();
-        //RunCurrentEventLoop(timeout);
-        //RunApplicationEventLoop();
-
-        // Previous func WaitNextEvent() was deprecated and 32-bit only.
-        // Func ReceiveNextEvent() is threadsafe and available even for 64-bit OS X.
-        //gotEvent = WaitNextEvent(highLevelEventMask, &event, timeout, NULL);
-        //event_received = ReceiveNextEvent(1, event_types, kEventDurationForever, true, &event_ref);
-        //event_received = ReceiveNextEvent(0, NULL, kEventDurationNoWait, true, &event_ref);
-        // TODO
-        //handler_remove_status = RemoveEventHandler(handler_ref);
-        /*
-        if (event_received == noErr)
-        {
-            VS("LOADER: AppleEvent - received event.\n");
-            ev_class = GetEventClass(event_ref);
-            ev_kind = GetEventKind(event_ref);
-            VS("LOADER: AppleEvent - event type: %u\n", ev_kind);
-            //if (GetEventKind(event_ref) == kAEOpenDocuments)
-            if (ev_class == kCoreEventClass)
-            {
-                VS("LOADER: AppleEvent - right class.\n");
-            }
-
-            ReleaseEvent(event_ref);
-        }
-        else
-        {
-            VS("LOADER: AppleEvent - ERROR receiving events code: %d\n", event_received);
-        }*/
-
-    }
-    else
-    {
-        VS("LOADER: AppleEvent - ERROR installing handler.\n");
-    }
-
-    // Remove handler_ref reference when we are done with EventHandlerUPP.
-    // Carbon Event Manager does not do this automatically.
-    DisposeEventHandlerUPP(handler_open_doc)
-}
-#endif
-
-
 
 #endif  /* WIN32 */

@@ -420,7 +420,7 @@ void pyi_launch_initialize(ARCHIVE_STATUS * status)
      * Call TransformProcessType() in the child process.
      */
     ProcessSerialNumber psn = { 0, kCurrentProcess };
-    OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToForegroundApplication);
+    OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToUIElementApplication);
     #elif defined(_WIN32)
     char * manifest;
     manifest = pyi_arch_get_option(status, "pyi-windows-manifest-filename");
