@@ -491,14 +491,16 @@ def configure(ctx):
         ctx.env.append_value('LINKFLAGS', '-mwindows')
         ctx.env.append_value('CFLAGS', '-mwindows')
     elif is_darwin:
-        # conf.env.append_value('CFLAGS', '-I/Developer/Headers/FlatCarbon')
-        # To support catching AppleEvents and running as ordinary OSX GUI app,
-        # we have to link against the Carbon framework.
-        # This linkage only needs to be there for the windowed bootloaders.
         ctx.env.append_value('LINKFLAGS', '-framework')
         ctx.env.append_value('LINKFLAGS', 'Carbon')
-        # conf.env.append_value('LINKFLAGS', '-framework')
-        # conf.env.append_value('LINKFLAGS', 'ApplicationServices')
+        ctx.env.append_value('LINKFLAGS', '-framework')
+        ctx.env.append_value('LINKFLAGS', 'CoreFoundation')
+        ctx.env.append_value('LINKFLAGS', '-framework')
+        ctx.env.append_value('LINKFLAGS', 'Cocoa')
+        ctx.env.append_value('LINKFLAGS', '-framework')
+        ctx.env.append_value('LINKFLAGS', 'ApplicationServices')
+        ctx.env.append_value('LINKFLAGS', '-lobjc')
+        ctx.env.append_value('LINKFLAGS', '-fobjc-link-runtime')
 
     ## setup RELEASE environment
     ctx.setenv('release', basic_env)  # Ensure env contains shared values.
@@ -515,15 +517,16 @@ def configure(ctx):
         ctx.env.append_value('LINKFLAGS', '-mwindows')
         ctx.env.append_value('CFLAGS', '-mwindows')
     elif is_darwin:
-        # To support catching AppleEvents and running as ordinary OSX GUI app,
-        # we have to link against the Carbon framework.
-        # This linkage only needs to be there for the windowed bootloaders.
         ctx.env.append_value('LINKFLAGS', '-framework')
         ctx.env.append_value('LINKFLAGS', 'Carbon')
-        # TODO Do we need to link with this framework?
-        # conf.env.append_value('LINKFLAGS', '-framework')
-        # conf.env.append_value('LINKFLAGS', 'ApplicationServices')
-
+        ctx.env.append_value('LINKFLAGS', '-framework')
+        ctx.env.append_value('LINKFLAGS', 'CoreFoundation')
+        ctx.env.append_value('LINKFLAGS', '-framework')
+        ctx.env.append_value('LINKFLAGS', 'Cocoa')
+        ctx.env.append_value('LINKFLAGS', '-framework')
+        ctx.env.append_value('LINKFLAGS', 'ApplicationServices')
+        ctx.env.append_value('LINKFLAGS', '-lobjc')
+        ctx.env.append_value('LINKFLAGS', '-fobjc-link-runtime')
 
 # TODO Use 'strip' command to decrease the size of compiled bootloaders.
 def build(ctx):
